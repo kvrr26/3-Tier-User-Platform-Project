@@ -397,6 +397,7 @@ jobs:
     name: Docker Build & Push
     needs:
       - client-build
+      - sonarqube
     runs-on: ubuntu-latest
 
     steps:
