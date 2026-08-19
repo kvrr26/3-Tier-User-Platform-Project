@@ -1,0 +1,9 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "EKSDescribeCluster",
+    "Effect": "Allow",
+    "Action": ["eks:DescribeCluster"],
+    "Resource": "arn:aws:eks:ap-south-1:986232521987:cluster/my-cluster"
+  }]
+}
