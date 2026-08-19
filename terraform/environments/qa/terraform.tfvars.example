@@ -1,0 +1,18 @@
+# Copy this file to terraform.tfvars (gitignored) and fill in real values.
+
+aws_region        = "ap-south-1"
+eks_cluster_name  = "my-cluster"
+route53_zone_name = "kodatala.space"
+app_hostname      = "qa.kodatala.space"
+
+# Get this after the ingress has created its ALB:
+#   kubectl get ingress app-ingress -n qa -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+alb_dns_name = "k8s-qa-appingre-xxxxxxxxxx-xxxxxxxxxx.ap-south-1.elb.amazonaws.com"
+
+mysql_secret_values = {
+  MYSQL_ROOT_PASSWORD = "CHANGE_ME"
+  MYSQL_DATABASE      = "test_db"
+  MYSQL_USER          = "appuser"
+  MYSQL_PASSWORD      = "CHANGE_ME"
+  DATABASE_URL        = "mysql://appuser:CHANGE_ME@mysql:3306/test_db"
+}

@@ -1,0 +1,8 @@
+# Copy this file to terraform.tfvars (gitignored) and fill in real values.
+
+aws_region       = "ap-south-1"
+eks_cluster_name = "my-cluster"
+
+# Find with:
+#   aws iam list-roles --query "Roles[?contains(RoleName, 'aws-load-balancer-controller')].RoleName" --output text
+alb_controller_role_name = "PUT_ACTUAL_ROLE_NAME_HERE"
