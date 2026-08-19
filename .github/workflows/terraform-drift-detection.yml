@@ -1,0 +1,78 @@
+name: Terraform Drift Detection
+
+# Runs `terraform plan` against every environment on a schedule to catch drift -- changes made
+# directly via the AWS console/CLI that bypass this Terraform config. This workflow never applies
+# anything, it only detects and reports. A failed scheduled run shows up as a failed Actions run
+# (and GitHub notifies watchers by default), so drift surfaces without a separate alert integration.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  drift-check:
+    name: Drift Check (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [qa]
+
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "latest"
+
+      - name: Configure AWS credentials from GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ap-south-1
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -input=false -detailed-exitcode -no-color -out=tfplan.binary | tee plan-output.txt
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Show human-readable plan
+        if: steps.plan.outputs.exit_code == '2'
+        run: terraform show -no-color tfplan.binary
+
+      - name: Upload plan artifact
+        if: steps.plan.outputs.exit_code == '2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-plan-${{ matrix.environment }}
+          path: terraform/environments/${{ matrix.environment }}/plan-output.txt
+
+      - name: Fail if drift detected
+        if: steps.plan.outputs.exit_code == '2'
+        run: |
+          echo "::error::Terraform drift detected in ${{ matrix.environment }} -- real AWS state no longer matches the terraform config. See the plan output above / the uploaded artifact."
+          exit 1
+
+      - name: Fail if terraform plan errored
+        if: steps.plan.outputs.exit_code == '1'
+        run: |
+          echo "::error::terraform plan itself failed (exit code 1) for ${{ matrix.environment }} -- likely a credentials/permissions problem, not drift."
+          exit 1
