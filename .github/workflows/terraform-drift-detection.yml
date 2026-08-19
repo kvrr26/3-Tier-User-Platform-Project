@@ -1,10 +1,5 @@
 name: Terraform Drift Detection
 
-# Runs `terraform plan` against every environment on a schedule to catch drift -- changes made
-# directly via the AWS console/CLI that bypass this Terraform config. This workflow never applies
-# anything, it only detects and reports. A failed scheduled run shows up as a failed Actions run
-# (and GitHub notifies watchers by default), so drift surfaces without a separate alert integration.
-
 on:
   schedule:
     - cron: "0 3 * * *" # 03:00 UTC daily
@@ -35,6 +30,22 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "latest"
+
+      - name: DEBUG - Decode actual OIDC token claims
+        run: |
+          python3 - << 'PYEOF'
+          import os, json, base64, urllib.request
+          req_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com"
+          req_token = os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+          req = urllib.request.Request(req_url, headers={"Authorization": f"Bearer {req_token}"})
+          data = json.loads(urllib.request.urlopen(req).read())
+          id_token = data["value"]
+          payload_b64 = id_token.split(".")[1]
+          payload_b64 += "=" * (-len(payload_b64) % 4)
+          payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+          keep = ["sub", "aud", "iss", "repository", "repository_owner", "ref", "job_workflow_ref"]
+          print(json.dumps({k: payload[k] for k in keep if k in payload}, indent=2))
+          PYEOF
 
       - name: Configure AWS credentials from GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
