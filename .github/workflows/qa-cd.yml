@@ -1,0 +1,112 @@
+name: QA CD Pipeline
+
+# This is deliberately a separate workflow from qa-cicd.yml. That file only builds, scans, and
+# pushes the Docker image (kv2611/nodejs-app:<sha> and :latest) -- it has no deploy step. This
+# workflow picks up right after it finishes and actually rolls the new image out to the qa
+# namespace, mirroring the pattern prod-cd.yaml already uses (update manifest with the concrete
+# image sha, commit it back, then kubectl apply + wait for rollout).
+#
+# Deploying by the immutable sha tag (instead of re-applying the same "kv2611/nodejs-app:latest"
+# manifest every time) matters: without a real spec change, `kubectl apply` is a no-op and the
+# running pods keep whatever image they already have, even though a new one was just pushed.
+
+on:
+  workflow_run:
+    workflows: ["Enterprise DevSecOps CICD Pipeline"]
+    branches: [qa]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Image tag to deploy (full commit SHA). Leave blank to deploy the SHA from the most recent successful CI run on qa."
+        required: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  update-qa-manifest:
+    name: Update QA Manifest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.resolve-sha.outputs.sha }}
+
+    steps:
+      - name: Checkout qa branch
+        uses: actions/checkout@v4
+        with:
+          ref: qa
+
+      - name: Resolve image sha to deploy
+        id: resolve-sha
+        run: |
+          if [ -n "${{ github.event.inputs.image_sha }}" ]; then
+            echo "sha=${{ github.event.inputs.image_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update image tag in qa manifest
+        run: |
+          sed -i "s|image: kv2611/nodejs-app:.*|image: kv2611/nodejs-app:${{ steps.resolve-sha.outputs.sha }}|g" k8-manifests/qa/app-deployment.yaml
+
+      - name: Show updated manifest
+        run: cat k8-manifests/qa/app-deployment.yaml
+
+      - name: Commit and push updated qa manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8-manifests/qa/app-deployment.yaml
+          git commit -m "Update qa image to ${{ steps.resolve-sha.outputs.sha }} [skip ci]" || echo "No changes to commit"
+          git push origin qa
+
+  deploy-to-k8s:
+    name: Deploy to QA Kubernetes
+    needs: update-qa-manifest
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ap-south-1
+      EKS_CLUSTER_NAME: my-cluster
+      K8S_NAMESPACE: qa
+
+    steps:
+      - name: Checkout latest qa
+        uses: actions/checkout@v4
+        with:
+          ref: qa
+
+      - name: Configure AWS credentials from GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME1 }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Generate kubeconfig for EKS
+        run: aws eks update-kubeconfig --region "${AWS_REGION}" --name "${EKS_CLUSTER_NAME}"
+
+      - name: Verify identity
+        run: |
+          aws sts get-caller-identity
+          kubectl config current-context
+
+      - name: Verify namespace access
+        run: |
+          kubectl get pods -n "${K8S_NAMESPACE}" || true
+          kubectl auth can-i create deployments -n "${K8S_NAMESPACE}"
+          kubectl auth can-i create services -n "${K8S_NAMESPACE}"
+          kubectl auth can-i create ingresses.networking.k8s.io -n "${K8S_NAMESPACE}"
+
+      - name: Deploy qa manifests
+        run: |
+          kubectl apply -f k8-manifests/qa/ -n "${K8S_NAMESPACE}"
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/nodejs-app -n "${K8S_NAMESPACE}" --timeout=180s
