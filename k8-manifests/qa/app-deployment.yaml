@@ -17,7 +17,7 @@ spec:
       - name: regcred
       containers:
       - name: nodejs-app
-        image: kv2611/nodejs-app:latest
+        image: kv2611/nodejs-app:c4ce7b89c9e0d618c54cb7d292adde74c28212c2
         ports:
         - containerPort: 5000
         env:
