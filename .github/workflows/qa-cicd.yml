@@ -247,7 +247,6 @@ jobs:
 
       - name: Run client lint
         run: npm run lint --if-present
-        continue-on-error: true
 
   server-lint:
     name: Server Lint
@@ -278,7 +277,6 @@ jobs:
 
       - name: Run server lint
         run: npm run lint --if-present
-        continue-on-error: true
 
 
   client-test:
